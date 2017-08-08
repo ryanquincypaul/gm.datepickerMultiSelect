@@ -22,6 +22,15 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+// Date.parse is not a safe way to parse dates and broke the control for me on Chrome in the EDT timezone.
+// It would store the date prior to the date selected due to the funky parsing.
+// parse a date in yyyy-mm-dd format
+function parseDate(input) {
+  var parts = input.split('-');
+  // new Date(year, month [, day [, hours[, minutes[, seconds[, ms]]]]])
+  return new Date(parts[0], parts[1]-1, parts[2]); // Note: months are 0-based
+}
+
 (function (angular) {
 	'use strict';
 	
@@ -64,7 +73,7 @@ SOFTWARE.
 						if(!newVal)
 							return;
 							
-						var dateVal = Date.parse($filter('gmISODate')(newVal)), //useUTC ? new Date(newVal).setUTCHours(0, 0, 0, 0) : new Date(newVal).setHours(0, 0, 0, 0),
+						var dateVal = parseDate($filter('gmISODate')(newVal)).getTime(), //useUTC ? new Date(newVal).setUTCHours(0, 0, 0, 0) : new Date(newVal).setHours(0, 0, 0, 0),
 							selectedDates = scope.selectedDates;
 
 						if (scope.selectRange) {
@@ -134,7 +143,7 @@ SOFTWARE.
 					  console.log('update');
 						angular.forEach(scope.rows, function (row) {
 							angular.forEach(row, function (day) {
-								day.selected = scope.selectedDates.indexOf(Date.parse($filter('gmISODate')(day.date))) > -1;
+								day.selected = scope.selectedDates.indexOf(parseDate($filter('gmISODate')(day.date)).getTime()) > -1;
 							});
 						});
 					}
@@ -149,5 +158,74 @@ SOFTWARE.
 
 		if ($injector.has('uibDaypickerDirective'))
 			$provide.decorator('uibDaypickerDirective', ['$delegate', '$filter', daypickerDelegate]);
+
+		// extending datepicker popup (access to attributes and app scope through $parent)
+		// NOTES: Need to blank out the active date using the ng-change directive in order to select the same date repeatedly.
+		// otherwise nothing happens the second time you click the same date if another date is not clicked in between.
+		var datepickerPopupDelegate = function ($delegate, $filter) {
+			var directive = $delegate[0];
+
+			// Override compile
+			var link = directive.link;
+
+			directive.compile = function () {
+				return function (scope, element, attrs, ctrls) {
+					link.apply(this, arguments);
+
+					scope.selectedDates = [];
+					scope.selectRange;
+
+					scope.$parent.$watchCollection(attrs.multiSelect, function (newVal) {
+						scope.selectedDates = newVal || [];
+					});
+
+					attrs.$observe('selectRange', function (newVal) {
+						scope.selectRange = !!newVal && newVal !== "false";
+					});
+
+					var ngModelCtrl = ctrls[0];
+
+					ngModelCtrl.$viewChangeListeners.push(function() {
+						var newVal = scope.$parent.$eval(attrs.ngModel);
+						if(!newVal)
+							return;
+							
+						var dateVal = parseDate($filter('gmISODate')(newVal)).getTime(), //useUTC ? new Date(newVal).setUTCHours(0, 0, 0, 0) : new Date(newVal).setHours(0, 0, 0, 0),
+							selectedDates = scope.selectedDates;
+
+						if (scope.selectRange) {
+							// reset range
+							if (!selectedDates.length || selectedDates.length > 1 || selectedDates[0] == dateVal)
+								return selectedDates.splice(0, selectedDates.length, dateVal);
+
+							selectedDates.push(dateVal);
+
+							var tempVal = Math.min.apply(null, selectedDates);
+							var maxVal = Math.max.apply(null, selectedDates);
+
+							// Start on the next day to prevent duplicating the	first date
+							tempVal += 1000 * 60 * 60 * 24;
+							while (tempVal < maxVal) {
+								selectedDates.push(tempVal);
+
+								// Set a day ahead after pushing to prevent duplicating last date
+								tempVal += 1000 * 60 * 60 * 24;
+							}
+						} else {
+							if (selectedDates.indexOf(dateVal) < 0) {
+								selectedDates.push(dateVal);
+							} else {
+								selectedDates.splice(selectedDates.indexOf(dateVal), 1);
+							}
+						}
+					});
+				};
+			};
+
+			return $delegate;
+		};
+
+		if ($injector.has('uibDatepickerPopupDirective'))
+			$provide.decorator('uibDatepickerPopupDirective', ['$delegate', '$filter', datepickerPopupDelegate]);
 	}]);
 })(window.angular);
